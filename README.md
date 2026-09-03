@@ -37,7 +37,11 @@ node scripts/format-quote.js result.json
 ```
 git clone https://gitee.com/zph2254/yinyi_quote_skill.git yinyi-quote
 ```
-- 不用 git：打开 [仓库页面](https://gitee.com/zph2254/yinyi_quote_skill)，下载 ZIP 压缩包，解压得到 `yinyi-quote` 目录
+GitHub 镜像（GitHub 访问顺畅时可用）：
+```
+git clone https://github.com/ZPH-xx/yinyi_quote_skill.git yinyi-quote
+```
+- 不用 git：打开 [Gitee 仓库页面](https://gitee.com/zph2254/yinyi_quote_skill) 或 [GitHub 镜像](https://github.com/ZPH-xx/yinyi_quote_skill)，下载 ZIP 压缩包，解压得到 `yinyi-quote` 目录
 - 以后更新：在 skill 目录里执行 `git pull`
 
 下面的命令把仓库直接克隆到对应工具的技能目录，克隆后的目录名必须保持 `yinyi-quote`。
