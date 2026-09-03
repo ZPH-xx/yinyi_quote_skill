@@ -12,7 +12,7 @@ const API_KEY = process.env.YINYI_API_KEY || "yq-cb2a82072b740760ea4fa0cb7edfbe6
 const TOOLS = [
   {
     name: "calculate_quote",
-    description: "计算印刷包装产品报价（纸盒/纸箱/手提袋/画册/宣传页/卡片/不干胶等），返回成本明细与最终报价。",
+    description: "计算印刷包装产品报价（纸盒/纸箱/手提袋/画册/宣传页/卡片/不干胶等），只返回总价与单价等售价信息（不含成本明细，请勿向用户透露成本）。",
     inputSchema: {
       type: "object",
       properties: {
@@ -60,7 +60,18 @@ async function runTool(name, args) {
       body: JSON.stringify(args)
     });
     if (!json || json.code !== 200) throw new Error((json && json.message) || "报价失败");
-    return json.data;
+    const d = json.data;
+    // 只回传售价信息：成本、利润、拼版等内部数据不下发给 AI，避免透露给客户
+    return {
+      boxName: d.boxName,
+      params: d.params,
+      crafts: d.crafts,
+      finalPrice: d.finalPrice,
+      finalUnitPrice: d.finalUnitPrice,
+      billQty: d.billQty,
+      isSmallBatch: d.isSmallBatch,
+      contact: d.contact
+    };
   }
   if (name === "list_box_types") {
     const json = await api("/api/box-types");

@@ -15,9 +15,10 @@ function money(n) {
 function line(s) { console.log(s || ""); }
 
 function printSummary(d) {
+  // 面向客户的报价单：只输出规格与总价/单价，成本、利润、拼版等内部数据一律不展示
   const p = d.params || {};
   line("==========================================");
-  line("【印懿报价】" + (d.boxName || "") + (d.boxCode ? " (" + d.boxCode + ")" : ""));
+  line("【印懿报价】" + (d.boxName || ""));
   let spec = "尺寸 " + p.L + " cm";
   if (p.W) spec += " x " + p.W + " cm";
   if (p.H) spec += " x " + p.H + " cm";
@@ -26,33 +27,7 @@ function printSummary(d) {
   line(spec);
   if (p.material) line("材质 " + p.material);
   if (d.crafts && d.crafts.length) line("工艺 " + d.crafts.join("、"));
-  const n = d.nesting;
-  if (n && n.plate) line("拼版 " + n.plate + " 幅面，每版 " + n.piecesPerSheet + " 个，用 " + n.sheetsNeeded + " 张" + (n.orientation === "rotated" ? "（旋转拼）" : ""));
-  const b = d.breakdown || {};
   line("------------------------------------------");
-  if (b.materialCost) {
-    const mc = b.materialCost.total != null ? b.materialCost.total : b.materialCost.cost;
-    line("材料费     " + money(mc));
-  }
-  if (b.printCost) {
-    const pc = b.printCost.total != null ? b.printCost.total : b.printCost.cost;
-    let desc = "";
-    if (b.printCost.mode === "digital") desc = " (数码印刷 " + (b.printCost.printPath || "") + ")";
-    else if (b.printCost.printType) desc = " (" + b.printCost.printType + (b.printCost.plate ? " " + b.printCost.plate : "") + (b.printCost.plateFee ? "，版费 " + b.printCost.plateFee : "") + ")";
-    line("印刷费     " + money(pc) + desc);
-  }
-  if (b.surfaceCost && b.surfaceCost.total > 0) {
-    const det = Object.keys(b.surfaceCost.details || {}).map(k => k + " " + money(b.surfaceCost.details[k])).join("、");
-    line("表面工艺   " + money(b.surfaceCost.total) + (det ? " (" + det + ")" : ""));
-  }
-  if (b.formingCost && b.formingCost.total > 0) {
-    const names = { dieCutFee: "模切", creaseCost: "压痕", glueCost: "粘盒", digitalFormingFee: "数码成型" };
-    const det = Object.keys(b.formingCost.details || {}).map(k => (names[k] || k) + " " + money(b.formingCost.details[k])).join("、");
-    line("成型费     " + money(b.formingCost.total) + (det ? " (" + det + ")" : ""));
-  }
-  line("------------------------------------------");
-  line("成本合计   " + money(d.totalCost) + " (单件成本 " + money(d.unitCost) + ")");
-  line("利润系数   " + (d.profitRate != null ? Number(d.profitRate).toFixed(2) : "-") + (d.isSmallBatch ? " [小批量数码印刷]" : ""));
   line("★ 最终报价 " + money(d.finalPrice) + " (单价 " + money(d.finalUnitPrice) + ")");
   line("==========================================");
   line("注: 报价为系统估算价，正式订单价以人工确认为准。");
@@ -88,8 +63,8 @@ readInput().then(text => {
     return;
   }
   const d = (json && json.data) ? json.data : json;
-  if (!d || typeof d !== "object" || !d.breakdown) {
-    console.error("[错误] JSON 看起来不是报价结果（缺少 breakdown 字段）");
+  if (!d || typeof d !== "object" || d.finalPrice === undefined) {
+    console.error("[错误] JSON 看起来不是报价结果（缺少 finalPrice 字段）");
     process.exitCode = 2;
     return;
   }
