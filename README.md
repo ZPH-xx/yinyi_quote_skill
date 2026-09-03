@@ -32,26 +32,45 @@ node scripts/format-quote.js result.json
 
 ## 各工具安装指南
 
-### Codex（OpenAI Codex CLI / 桌面应用）
-把整个 `yinyi-quote` 目录复制到技能目录：
-- Windows: `C:\Users\<用户名>\.codex\skills\yinyi-quote`
-- macOS / Linux: `~/.codex/skills/yinyi-quote`
+### 第一步：获取 skill（二选一）
+- 用 git（推荐，后续更新方便）：
+```
+git clone https://gitee.com/zph2254/yinyi_quote_skill.git yinyi-quote
+```
+- 不用 git：打开 [仓库页面](https://gitee.com/zph2254/yinyi_quote_skill)，下载 ZIP 压缩包，解压得到 `yinyi-quote` 目录
+- 以后更新：在 skill 目录里执行 `git pull`
 
+下面的命令把仓库直接克隆到对应工具的技能目录，克隆后的目录名必须保持 `yinyi-quote`。
+
+### Codex（OpenAI Codex CLI / 桌面应用）
+Windows：
+```
+git clone https://gitee.com/zph2254/yinyi_quote_skill.git C:\Users\<用户名>\.codex\skills\yinyi-quote
+```
+macOS / Linux：
+```
+git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.codex/skills/yinyi-quote
+```
 重新打开会话即可。Codex 的 shell 沙箱拦截联网时，它会按 SKILL.md 的指引申请联网权限或改用其他途径。
 
 ### Claude Code
-把整个目录复制到：
-- 个人级: `~/.claude/skills/yinyi-quote`
-- 项目级: `<项目>/.claude/skills/yinyi-quote`
+个人级：
+```
+git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.claude/skills/yinyi-quote
+```
+项目级：把仓库克隆到 `<项目>/.claude/skills/yinyi-quote`。
 
 Claude Code 会自动发现目录里的 SKILL.md；它自带 WebFetch 能力，可直接访问接口。
 
 ### 千问（Qwen Code / 通义灵码 CLI）
-若版本支持 skills 目录：放到 `~/.qwen/skills/yinyi-quote`。
+若版本支持 skills 目录：
+```
+git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-quote
+```
 若不支持：把 SKILL.md 内容复制到项目的 `QWEN.md` 或 `AGENTS.md` 里。
 
 ### WorkBuddy 及其他 Agent 工具
-- 支持 Agent Skills（SKILL.md）：把本目录配置为技能目录
+- 支持 Agent Skills（SKILL.md）：把本仓库克隆到它的技能目录，或把克隆下来的目录配置为技能目录
 - 只支持自定义提示词：把 SKILL.md 内容粘贴进系统提示词/角色设定
 - 支持 MCP：见下方 MCP 配置
 
