@@ -2,12 +2,47 @@
 // 印懿报价 MCP 服务器（stdio 传输，零依赖，Node >= 18）
 // MCP 客户端配置示例:
 //   {"mcpServers":{"yinyin-quote":{"command":"node","args":["/绝对路径/scripts/mcp-server.js"]}}}
-// 环境变量 YINTONG_API_BASE 可覆盖服务器地址（默认 https://zouph.com）。
-// 环境变量 YINYI_API_KEY 可覆盖报价接口 API key（默认内置当前有效 key）。
+// 环境变量 YINYI_API_BASE（兼容旧名 YINTONG_API_BASE）可覆盖服务器地址（默认 https://zouph.com）。
+// 报价 Key 无需配置：首次调用自动向 /api/skill/register 领一个专属 Key，
+// 并缓存在 ~/.yinyi-quote/mcp-key.json（含 installId，删掉文件也能找回同一个 Key）。
+// 如需强制指定 Key（例如已在官网绑定账号），设环境变量 YINYI_API_KEY 即可跳过领用。
 "use strict";
 
-const BASE_URL = (process.env.YINTONG_API_BASE || "https://zouph.com").replace(/\/+$/, "");
-const API_KEY = process.env.YINYI_API_KEY || "yq-cb2a82072b740760ea4fa0cb7edfbe6a";
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+
+const BASE_URL = (process.env.YINYI_API_BASE || process.env.YINTONG_API_BASE || "https://zouph.com").replace(/\/+$/, "");
+const KEY_DIR = path.join(os.homedir() || ".", ".yinyi-quote");
+const KEY_FILE = path.join(KEY_DIR, "mcp-key.json");
+
+let apiKey = process.env.YINYI_API_KEY || null;
+
+/** 取报价 Key：内存缓存 → 本地文件 → 向服务端领用（领用结果落盘复用） */
+async function resolveApiKey() {
+  if (apiKey) return apiKey;
+  let saved = null;
+  try { saved = JSON.parse(fs.readFileSync(KEY_FILE, "utf8")); } catch (e) { /* 首次运行没有该文件 */ }
+  if (saved && saved.apiKey) { apiKey = saved.apiKey; return apiKey; }
+
+  const installId = (saved && saved.installId) || crypto.randomBytes(16).toString("hex");
+  const resp = await fetch(BASE_URL + "/api/skill/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ installId, label: "mcp" })
+  });
+  const json = await resp.json();
+  if (!json || json.code !== 200 || !json.data || !json.data.apiKey) {
+    throw new Error("领取报价 Key 失败：" + ((json && json.message) || "接口无响应"));
+  }
+  apiKey = json.data.apiKey;
+  try {
+    fs.mkdirSync(KEY_DIR, { recursive: true });
+    fs.writeFileSync(KEY_FILE, JSON.stringify({ installId, apiKey }));
+  } catch (e) { /* 写不了本地文件也不影响本次会话使用 */ }
+  return apiKey;
+}
 
 const TOOLS = [
   {
@@ -48,17 +83,19 @@ const TOOLS = [
 
 async function api(path, options) {
   const resp = await fetch(BASE_URL + path, options);
-  return resp.json();
+  return { status: resp.status, json: await resp.json() };
 }
 
 async function runTool(name, args) {
   args = args || {};
   if (name === "calculate_quote") {
-    const json = await api("/api/quote", {
+    const { status, json } = await api("/api/quote", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Api-Key": API_KEY },
+      headers: { "Content-Type": "application/json", "X-Api-Key": await resolveApiKey() },
       body: JSON.stringify(args)
     });
+    // Key 失效或被吊销：丢掉缓存，下一次调用会自动重新领用
+    if (status === 401 || status === 403) apiKey = null;
     if (!json || json.code !== 200) throw new Error((json && json.message) || "报价失败");
     const d = json.data;
     // 只回传售价信息：成本、利润、拼版等内部数据不下发给 AI，避免透露给客户
@@ -74,7 +111,7 @@ async function runTool(name, args) {
     };
   }
   if (name === "list_box_types") {
-    const json = await api("/api/box-types");
+    const { json } = await api("/api/box-types");
     if (!json || json.code !== 200) throw new Error((json && json.message) || "查询失败");
     let list = json.data || [];
     if (args.keyword) {
@@ -84,7 +121,7 @@ async function runTool(name, args) {
     return list;
   }
   if (name === "list_materials") {
-    const json = await api("/api/materials");
+    const { json } = await api("/api/materials");
     if (!json || json.code !== 200) throw new Error((json && json.message) || "查询失败");
     let list = json.data || [];
     if (args.keyword) {
