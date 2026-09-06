@@ -6,6 +6,9 @@
 // 报价 Key 无需配置：首次调用自动向 /api/skill/register 领一个专属 Key，
 // 并缓存在 ~/.yinyi-quote/mcp-key.json（含 installId，删掉文件也能找回同一个 Key）。
 // 如需强制指定 Key（例如已在官网绑定账号），设环境变量 YINYI_API_KEY 即可跳过领用。
+// 除报价与查询外还提供额度相关工具：get_quota（还剩几次）、get_recharge_url（次数用完后
+// 生成专属充值链接）、redeem_code（兑换码充值）。参数不全时 calculate_quote 会返回结构化
+// 错误（errorCode + askUser + requiredDims），照它追问用户、补齐后带全部参数重发即可。
 "use strict";
 
 const os = require("os");
@@ -44,6 +47,41 @@ async function resolveApiKey() {
   return apiKey;
 }
 
+/**
+ * 服务端把「下一步该问用户什么」放在 errorCode + data 里（见 SKILL.md 的错误码对照表）。
+ * MCP 只有一条 text 通道，抛普通 Error 会把这些结构全丢掉，AI 就只剩一句 message 可猜，
+ * 于是会自己编尺寸、或者把「次数用完」当成「服务坏了」。所以错误也走结构化。
+ */
+class ToolError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = "ToolError";
+    this.detail = detail || null;
+  }
+}
+
+/** 把服务端响应转成带 errorCode / askUser / recharge 的错误对象 */
+function failFrom(json, status, fallback) {
+  const d = (json && json.data) || {};
+  const detail = {
+    httpStatus: status,
+    code: json ? json.code : null,
+    errorCode: (json && json.errorCode) || null,
+    message: (json && json.message) || fallback
+  };
+  // 参数类：缺什么、该怎么问用户，原样带上
+  ["askUser", "missing", "invalid", "missingLabels", "candidates", "requiredDims",
+   "boxCode", "boxName", "defaultMaterial", "contact"].forEach((k) => {
+    if (d[k] !== undefined) detail[k] = d[k];
+  });
+  // 额度类：把充值入口带上，AI 不用翻文档就知道下一步调哪个接口
+  if (d.recharge) detail.recharge = d.recharge;
+  ["quotaTotal", "quotaUsed", "quotaPaid", "remaining", "dailyLimit"].forEach((k) => {
+    if (d[k] !== undefined) detail[k] = d[k];
+  });
+  return new ToolError(detail.message, detail);
+}
+
 const TOOLS = [
   {
     name: "calculate_quote",
@@ -78,6 +116,25 @@ const TOOLS = [
       type: "object",
       properties: { keyword: { type: "string", description: "过滤关键词（可选），如 白卡" } }
     }
+  },
+  {
+    name: "get_quota",
+    description: "查询当前报价 Key 的剩余次数、已购次数、每日上限与可购档位。用户问「我还剩几次」时用；也可在批量报价前先查，避免中途撞 429。",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "get_recharge_url",
+    description: "生成一次性专属充值链接（30 分钟有效，微信扫码付款）。只在次数用完（errorCode QUOTA_EXHAUSTED）且用户明确同意充值时调用；把返回的 url 和 tellUser 原样转述给用户，严禁自己拼充值网址。",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "redeem_code",
+    description: "用兑换码给当前 Key 充值次数（用户不便扫码时的兜底通道）。",
+    inputSchema: {
+      type: "object",
+      properties: { code: { type: "string", description: "兑换码，形如 YQAC-DEFG-HJKL；大小写与横线不敏感" } },
+      required: ["code"]
+    }
   }
 ];
 
@@ -96,7 +153,7 @@ async function runTool(name, args) {
     });
     // Key 失效或被吊销：丢掉缓存，下一次调用会自动重新领用
     if (status === 401 || status === 403) apiKey = null;
-    if (!json || json.code !== 200) throw new Error((json && json.message) || "报价失败");
+    if (!json || json.code !== 200) throw failFrom(json, status, "报价失败");
     const d = json.data;
     // 只回传售价信息：成本、利润、拼版等内部数据不下发给 AI，避免透露给客户
     return {
@@ -130,7 +187,40 @@ async function runTool(name, args) {
     }
     return list;
   }
-  throw new Error("未知工具: " + name);
+  if (name === "get_quota") {
+    const { status, json } = await api("/api/skill/quota", { headers: { "X-Api-Key": await resolveApiKey() } });
+    if (status === 401 || status === 403) apiKey = null;
+    if (!json || json.code !== 200) throw failFrom(json, status, "查询额度失败");
+    const d = json.data;
+    return {
+      remaining: d.remaining, quotaTotal: d.quotaTotal, quotaUsed: d.quotaUsed,
+      quotaPaid: d.quotaPaid, dailyLimit: d.dailyLimit, exhausted: d.exhausted,
+      packs: d.packs, recharge: d.recharge || null
+    };
+  }
+  if (name === "get_recharge_url") {
+    const { status, json } = await api("/api/skill/claim-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Api-Key": await resolveApiKey() },
+      body: "{}"
+    });
+    if (status === 401 || status === 403) apiKey = null;
+    if (!json || json.code !== 200) throw failFrom(json, status, "生成充值链接失败");
+    const d = json.data;
+    return { url: d.url, expiresInMinutes: d.expiresInMinutes, packs: d.packs, tellUser: d.tellUser };
+  }
+  if (name === "redeem_code") {
+    if (!args.code) throw new ToolError("请提供兑换码", { errorCode: "CODE_REQUIRED" });
+    const { status, json } = await api("/api/skill/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Api-Key": await resolveApiKey() },
+      body: JSON.stringify({ code: args.code })
+    });
+    if (status === 401 || status === 403) apiKey = null;
+    if (!json || json.code !== 200) throw failFrom(json, status, "兑换失败");
+    return { message: json.message, quota: json.data && json.data.quota, key: json.data && json.data.key };
+  }
+  throw new ToolError("未知工具: " + name);
 }
 
 function send(obj) { process.stdout.write(JSON.stringify(obj) + "\n"); }
@@ -140,7 +230,7 @@ async function handle(msg) {
   const id = msg.id;
   try {
     if (msg.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.0.0" } } });
+      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.1.0" } } });
     } else if (msg.method === "notifications/initialized" || msg.method === "notifications/cancelled") {
       // 通知无需回复
     } else if (msg.method === "ping") {
@@ -153,7 +243,9 @@ async function handle(msg) {
         const data = await runTool(p.name, p.arguments);
         send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] } });
       } catch (e) {
-        send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: "调用失败: " + e.message }], isError: true } });
+        // 结构化错误：detail 里有 errorCode / askUser / candidates / recharge，AI 据此追问或引导充值
+        const text = e && e.detail ? JSON.stringify(e.detail, null, 2) : "调用失败: " + e.message;
+        send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], isError: true } });
       }
     } else if (id !== undefined) {
       send({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found: " + msg.method } });

@@ -1,6 +1,6 @@
 {
   "name": "yinyin-quote-skill",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "印懿印刷包装报价引擎 Skill — 提示词驱动，AI 工具直接调用 https://zouph.com 云端报价 API",
   "private": true,
   "engines": {
