@@ -113,7 +113,7 @@ description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、
 
 ## 额度用完了怎么充值
 
-装机赠送的次数（默认 30 次）用完后，`/api/quote` 返回 **HTTP 429 + `errorCode: "QUOTA_EXHAUSTED"`**，body 的 `data.recharge` 里直接写明了下一步该调哪个接口。**不要重试报价，也不要让用户去重装或改用别的产品**——就地充值即可。
+装机赠送的次数（默认 30 次）用完后，`/api/quote` 返回 **HTTP 429 + `errorCode: "QUOTA_EXHAUSTED"`**，body 的 `data.recharge` 里直接写明了下一步该调哪个接口。**在用户付钱之前反复重试报价没有用**，也不要让用户去重装或改用别的产品——就地充值即可（付完之后按下面第 4 步重发，那一步是必须的）。
 
 1. **先问用户**：把 `data.recharge.askUser` 转述给用户（免费额度用完了，需要现在充值次数包吗？）。用户没表示要充，就不要擅自生成链接。
 2. 用户同意后，用同一个 Key 换一条**专属充值链接**：
@@ -126,10 +126,12 @@ description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、
    ```
    返回 `data.url`（形如 `https://zouph.com/recharge?t=ct_…`）、`data.expiresInMinutes`（30）、`data.packs`（各档位的价格与次数）、`data.tellUser`（已写好的现成话术）。
 3. **把 `data.url` 原样发给用户**，让他点开：页面上选次数包 → 手机号登录/注册 → 微信扫码付款 → 页面自动确认到账。`data.tellUser` 直接念给用户就行，不用自己组织语言。
-4. 用户回来说「充好了」之后，重新发原来那次报价请求即可（次数已到账）。想先确认到账，可调 `GET https://zouph.com/api/skill/quota`（同样带 `X-Api-Key`），看 `data.remaining` 与 `data.quotaPaid`。
+4. 用户回来说「充好了」之后，**直接重发原来那次报价请求**。服务端在你重发前会自己向微信核对那笔充值：核对上就当场发放并正常出价，你不需要自己确认。想先确认也可以调 `GET https://zouph.com/api/skill/quota`（同样带 `X-Api-Key`），它走的是同一次对账。
+5. **只有一种情况要停下**：响应里出现 `data.pendingOrders`（或 `claim-url` 返回 `alreadyPaid` / `paymentInFlight`）。这说明有一笔充值还在微信侧确认中——**这时绝对不要再生成付款链接、不要让用户扫第二次**，照 `askUser` / `tellUser` 说的等约 30 秒重发报价即可；重发是安全的（额度类 429 不会触发封禁）。反复三四次仍然没到账，再如实告诉用户联系客服 15990159967 并报订单号（`pendingOrders[].orderId`）。
 
 规则与红线：
 - 充值链接只能由 `POST /api/skill/claim-url` 生成，**严禁自己拼一个充值网址**，也严禁改动链接里的 `t=` 参数。
+- **一次只让用户付一笔。** 生成新链接前服务端会自动对账，返回 `alreadyPaid: true`（上一笔其实已到账，只是回调晚了）或 `paymentInFlight: true`（还在确认中）时，按 `tellUser` 的原话劝住用户，别把链接当第二次收款入口递出去。
 - 链接 30 分钟内有效且与这个 Key 绑定；过期或用户换了设备，重新调一次 `claim-url` 即可（30 分钟内会复用同一条链接，不会重复生成）。
 - 用户不方便扫码时用**兑换码**兜底：让用户联系客服 15990159967 拿码，然后 `POST https://zouph.com/api/skill/redeem`，body `{"code":"XXXX-XXXX-XXXX"}`，同样带 `X-Api-Key`；成功后直接把 `message` 转述给用户。
 - 付款一律在充值页里由用户自己完成，不要代用户付款、不要索取付款密码或验证码。

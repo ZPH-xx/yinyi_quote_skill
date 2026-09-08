@@ -169,17 +169,23 @@ git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-q
 返回 `{code:200, data:[{name,category,grammage_min,grammage_max}]}`。
 
 ### GET /api/skill/quota
-请求头 `X-Api-Key`。返回 `{code:200,data:{apiKey,quotaTotal,quotaUsed,quotaPaid,remaining,dailyLimit,exhausted,packs,recharge}}`。`remaining` 为 `null` 表示不限量（白名单 Key）；`exhausted:true` 时 `recharge` 给出下一步该调的充值接口。
+请求头 `X-Api-Key`。返回 `{code:200,data:{apiKey,quotaTotal,quotaUsed,quotaPaid,remaining,dailyLimit,exhausted,packs,recharge,pendingOrders?}}`。`remaining` 为 `null` 表示不限量（白名单 Key）；`exhausted:true` 时 `recharge` 给出下一步该调的充值接口。**这个接口自带对账**：`exhausted` 为真时会先向微信核对该 Key 名下未确认的充值单，付了就当场到账再返回，所以用户说「充好了」而你不确定时，调它比猜可靠。`pendingOrders`（仅在有待确认单时出现）形如 `[{orderId,packName,quota,priceYuan,tradeState}]`，同时 `recharge.paymentInFlight:true`——此时应让用户等约 30 秒重发报价，**不要再生成新链接**。
 
 ### GET /api/skill/packs
 公开接口，无需 Key。返回 `{code:200,data:{packs:[{key,name,quota,amount,priceYuan,dailyLimit}]}}`，`amount` 单位为分。
 
 ### POST /api/skill/claim-url
 请求头 `X-Api-Key`，body `{}`。生成一次性专属充值链接（30 分钟内对同一 Key 复用同一条）。
-返回 `{code:200,data:{url,expiresAt,expiresInMinutes,reused,key,packs,tellUser}}`：`url` 形如 `https://zouph.com/recharge?t=ct_…`，原样交给用户点击；`tellUser` 是可直接念给用户的话术。链接域名由服务端 `SKILL_RECHARGE_BASE_URL` 决定，**不接受请求参数覆盖**（否则被诱导的 AI 能生成指向钓鱼域的「官方充值链接」）。
+返回 `{code:200,data:{url,expiresAt,expiresInMinutes,reused,key,packs,tellUser,pendingOrders?,paymentInFlight?,alreadyPaid?,grantedQuota?}}`：`url` 形如 `https://zouph.com/recharge?t=ct_…`，原样交给用户点击；`tellUser` 是可直接念给用户的话术。链接域名由服务端 `SKILL_RECHARGE_BASE_URL` 决定，**不接受请求参数覆盖**（否则被诱导的 AI 能生成指向钓鱼域的「官方充值链接」）。
+**出码前同样先对账**，因此有三种结果，`tellUser` 已经分别写好，照念即可：
+- 正常：给出链接；
+- `paymentInFlight:true`：有一笔还在微信侧确认中（用户可能正在输密码），话术是「先别重复付款，等 30 秒重发报价」；
+- `alreadyPaid:true` + `grantedQuota:N`：上一笔其实已经付成（回调晚了而已），次数当场到账，话术明确让用户**别再扫第二次**。
 
 ### 充值页 GET /recharge?t=<token>
-用户在浏览器里打开：选次数包 → 手机号 + 密码登录/注册（与官网、小程序网页端同号互通）→ 微信扫码付款 → 页面每 2.5 秒轮询到账状态。付款成功后次数直接发放到 `t` 所绑定的那个 Key，用户回到 AI 工具说一句「充好了」即可继续报价。手机端可直接跳转微信付款。
+用户在浏览器里打开：选次数包 → 手机号 + 密码登录/注册（与官网、小程序网页端同号互通）→ 微信扫码付款 → 页面每 2.5 秒轮询到账状态。付款成功后次数直接发放到 `t` 所绑定的那个 Key，用户回到 AI 工具说一句「充好了」即可继续报价。手机端可直接跳转微信付款；跳转被内置浏览器拦住时，页面还提供「显示二维码用另一台设备扫」与「复制链接到电脑打开」两条退路。**页面没来得及显示到账也不等于没到账**：到账由服务端保证（回调 / 回 AI 时对账 / 后台定时扫三条路都会补发），用户只需回 AI 重发报价。
+
+每张付款码 **15 分钟内有效**（服务端下单时给微信传了 `time_expire`，超时自动关单），页面会写明几点前有效，过期后撤掉二维码并给出「重新生成付款码」按钮；同一个 Key 最多挂 3 张没付的码，再多会被提示先付掉手上那张。所以用户说"码扫不了/付不了"时，八成是过期了 —— 回页面点重新生成即可，不需要重领充值链接。
 
 ### POST /api/skill/redeem
 请求头 `X-Api-Key`，body `{"code":"YQAC-DEFG-HJKL"}`。兑换码充值（不便扫码时的兜底）。成功返回 `{code:200,message:"兑换成功，已到账 N 次…",data:{quota,key}}`；失败时 `errorCode` 取 `CODE_REQUIRED` / `CODE_NOT_FOUND` / `CODE_USED` / `CODE_VOID`。兑换码不区分大小写，横线可省略。
@@ -189,7 +195,7 @@ git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-q
 - **报价失败「对应多种盒型」？** 盒型名有歧义，message 里列了候选，选一个具体盒型重试。
 - **返回 429「今日报价次数已达上限」？** 该来源当天的额度已用完（`errorCode:"DAILY_LIMIT"`），次日自动恢复；这不是次数用完，不需要充值。
 - **返回 429 `QUOTA_EXHAUSTED`（次数用完了）怎么办？** 调 `POST /api/skill/claim-url` 拿到专属充值链接交给用户，微信扫码付款后立即到账；不便扫码可联系客服 15990159967 用兑换码充值。MCP 用户直接用 `get_recharge_url` / `redeem_code` 工具。
-- **付了钱次数没到账？** 微信回调一般几秒内到账，充值页会自动刷新；超过 5 分钟仍未到账，把订单号（`QP_` 开头）发给客服 15990159967 核对。
+- **付了钱次数没到账？** 先让用户回 AI 工具重发一次报价——服务端会自己向微信核对并补发（充值页关掉了、微信回调晚了都不影响）。仍没到账再看 `data.pendingOrders`：里面有 `orderId`（`QP_` 开头）就说明有一笔正在确认，等约 30 秒再重发；超过 5 分钟仍不到账，把订单号发给客服 15990159967 核对。**不要因为没到账就再要一条新链接付款**——同一笔钱付两次就是扣两次。
 - **调用会被记录吗？** 会。服务端按来源保留调用留痕（时间、来源 IP、盒型与尺寸数量、报价结果），用于额度控制与滥用处置，保留 90 天后自动清理；不会记录任何客户身份或联系方式。
 - **想指向本地开发服务器？** 把请求地址换成 `http://192.168.1.12:3900`（内网调试服务器）。
 - **需要更新价格？** 无需更新 skill，价格库在服务器集中维护。
