@@ -87,7 +87,9 @@ function failFrom(json, status, fallback) {
 const TOOLS = [
   {
     name: "calculate_quote",
-    description: "计算印刷包装产品报价（纸盒/纸箱/手提袋/画册/宣传页/卡片/不干胶等），只返回总价与单价等售价信息（不含成本明细，请勿向用户透露成本）。",
+    description: "计算印刷包装产品报价（纸盒/纸箱/手提袋/画册/宣传页/卡片/不干胶等），只返回总价与单价等售价信息（不含成本明细，请勿向用户透露成本）。"
+      + "画册/宣传册必须传 pageCount（P 数），否则服务端返回 400 追问；它按「页 × 本」计价，缺 P 数无法出价。"
+      + "若响应带 data.estimate（未计价工艺 / 材质为系统估算），必须把 estimate.hint 原样转述给用户，不得把这当成含全部工艺的成品价。",
     inputSchema: {
       type: "object",
       properties: {
@@ -96,9 +98,21 @@ const TOOLS = [
         W: { type: "number", description: "宽（cm）" },
         H: { type: "number", description: "高（cm）；卡片/吊牌/宣传页等平面产品可不传" },
         quantity: { type: "integer", description: "数量，必填" },
-        material: { type: "string", description: "材质，如 300g白卡纸、157g铜版纸；不传用盒型默认材质" },
-        crafts: { type: "array", items: { type: "string" }, description: "后加工工艺，如 覆亮膜/烫金/UV/击凸" },
-        options: { type: "object", description: "附加选项（可选）" }
+        material: { type: "string", description: "材质，如 300g白卡纸、157g铜版纸。不传时普通盒型一律按 300g白卡纸 估算（不是盒型默认材质！），"
+          + "服务端会在 data.estimate.assumedMaterial 里说明按什么估；要准就必须问到材质。画册不读此字段，请用 coverPaper/innerPaper" },
+        crafts: { type: "array", items: { type: "string" }, description: "后加工工艺，如 覆亮膜/烫金/UV/击凸。线上无价档的写法（如 贴亮片）不计价，"
+          + "响应会以 data.estimate.unbilledCrafts + contactRequired 标出" },
+        pageCount: { type: "integer", description: "P 数（页数，含封面，4 的倍数，如 16/32/64）：画册必填" },
+        bindingType: { type: "string", description: "装订方式（可选）：saddle 骑马钉 / perfect 胶装 / sewing 锁线 / hardcover 精装 / ring 圈装；缺省按 P 数自动选" },
+        coverPaper: { type: "string", description: "画册封面纸（可选），缺省 250g铜版纸" },
+        innerPaper: { type: "string", description: "画册内页纸（可选），缺省 157g铜版纸；用户只说材质没说封面/内页时归到这里" },
+        innerCrafts: { type: "array", items: { type: "string" }, description: "画册内页工艺（可选），与 crafts 分开计价" },
+        foldType: { type: "integer", description: "宣传页折页道数（可选），如 1 折、2 折" },
+        colorCount: { type: "integer", description: "印刷色数（可选），如 4；「四色+白」传 5" },
+        options: { type: "object", description: "附加选项（可选）" },
+        rawText: { type: "string", description: "建议附带：用户这句需求的**原样原文**（不要改写、不要摘要、不要翻译成参数）。"
+          + "服务端只做留痕排查、不参与计价、不会回显，用于事后核对有没有把尺寸/数量/材质抄错——抄错参数是本工具最常见的错价来源。"
+          + "超长会被截到 500 字；不方便取到原话时可不传，不影响报价" }
       },
       required: ["boxType", "L", "quantity"]
     }
@@ -157,8 +171,12 @@ async function runTool(name, args) {
     if (status === 401 || status === 403) apiKey = null;
     if (!json || json.code !== 200) throw failFrom(json, status, "报价失败");
     const d = json.data;
-    // 只回传售价信息：成本、利润、拼版等内部数据不下发给 AI，避免透露给客户
-    return {
+    // 只回传售价信息：成本、利润、拼版等内部数据不下发给 AI，避免透露给客户。
+    // 🔴 但 estimate 必须透传 —— 它是"这一单有哪些没算钱"的唯一信号。
+    // 这里曾经是字段白名单，白名单没列 estimate，结果服务端修好了"亮片静默 0 元"、
+    // MCP 侧却仍然什么都不知道，AI 照样把缺工艺的价格当成品价念给客户。
+    // 同理画册的 pageCount/bindingName/sizeDesc 也要带上，否则 AI 复述需求时说不清是几 P 什么装订。
+    const out = {
       boxName: d.boxName,
       params: d.params,
       crafts: d.crafts,
@@ -168,6 +186,13 @@ async function runTool(name, args) {
       isSmallBatch: d.isSmallBatch,
       contact: d.contact
     };
+    if (d.estimate) out.estimate = d.estimate;
+    for (const k of ["pageCount", "bindingName", "bindingType", "coverPaper", "innerPaper",
+      "innerCrafts", "sizeDesc"]) {
+      if (d[k] !== undefined) out[k] = d[k];
+    }
+    for (const k of ["billQty", "isSmallBatch"]) if (out[k] === undefined) delete out[k];
+    return out;
   }
   if (name === "list_box_types") {
     const { json } = await api("/api/box-types");

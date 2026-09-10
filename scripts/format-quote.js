@@ -22,13 +22,29 @@ function printSummary(d) {
   let spec = "尺寸 " + p.L + " cm";
   if (p.W) spec += " x " + p.W + " cm";
   if (p.H) spec += " x " + p.H + " cm";
-  spec += " | 数量 " + p.quantity;
+  // 画册按「页 × 本」计价，量词与盒型不同；P 数与装订不写进报价单，客户看不出这价是怎么来的
+  const isBrochure = d.pageCount !== undefined || d.productType === "brochure";
+  spec += " | 数量 " + p.quantity + (isBrochure ? " 本" : "");
   if (d.billQty && d.billQty !== p.quantity) spec += " (按 " + d.billQty + " 计价)";
   line(spec);
+  if (isBrochure) {
+    line("规格 " + (d.pageCount || "?") + "P"
+      + (d.bindingName ? " · " + d.bindingName : "")
+      + (d.sizeDesc ? " · " + d.sizeDesc : ""));
+    if (d.coverPaper) line("封面纸 " + d.coverPaper);
+    if (d.innerPaper) line("内页纸 " + d.innerPaper);
+  }
   if (p.material) line("材质 " + p.material);
+  else if (d.estimate && d.estimate.assumedMaterial) line("材质 未指定（按 " + d.estimate.assumedMaterial + " 估算）");
   if (d.crafts && d.crafts.length) line("工艺 " + d.crafts.join("、"));
+  if (d.innerCrafts && d.innerCrafts.length) line("内页工艺 " + d.innerCrafts.join("、"));
   line("------------------------------------------");
   line("★ 最终报价 " + money(d.finalPrice) + " (单价 " + money(d.finalUnitPrice) + ")");
+  // 报价单是客户眼里"含全部要求的成品价"，所以没算钱的工艺必须紧挨着价格写出来。
+  // 服务端把这类工艺收在 estimate.unbilledCrafts（2026-09-09 起），不写就等于让它看着像免费。
+  if (d.estimate && d.estimate.unbilledCrafts && d.estimate.unbilledCrafts.length) {
+    line("! 以上报价未包含: " + d.estimate.unbilledCrafts.join("、") + "（线上无价档，需人工核价）");
+  }
   line("==========================================");
   line("注: 报价为系统估算价，正式订单价以人工确认为准。");
   line("");

@@ -127,7 +127,7 @@ git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-q
 额度与限流：
 - **速率**：每来源 10 次/分钟，同参数 60 秒内有服务端缓存；超限返回 429，反复触发会被临时封禁（403）
 - **报价 Key 额度**：每个 Key `quotaTotal` 次（装机默认 30 次）。用完返回 HTTP 429 + `errorCode:"QUOTA_EXHAUSTED"`，message 含「装机赠送的 … 次报价额度已用完」（买过次数包后改说「…已全部用完（含已购 N 次）」），`data.recharge` 里写明下一步该调的充值接口
-- **付费后的每日上限**：买过次数包的 Key 另有 `dailyLimit`（默认 200 次/天，2000 次包为 500 次/天），超限返回 429 + `errorCode:"DAILY_LIMIT"`，次日自动恢复——这不是次数用完，不要引导充值
+- **付费后的每日上限**：买过次数包的 Key 另有 `dailyLimit`（默认 200 次/天；¥129 / 5000 次这一档为 500 次/天），超限返回 429 + `errorCode:"DAILY_LIMIT"`，次日自动恢复——这不是次数用完，不要引导充值
 - **无 Key/旧共享 Key 的来源**：按来源 IP 每日 50 次（服务端 `ANON_QUOTE_DAILY_LIMIT` 可调），用完当天返回 429 且 message 含「今日报价次数已达上限」，次日自动恢复
 - 每次成功报价服务端都会留痕（Key/来源 IP/盒型与数量/报价结果），保留 90 天
 
@@ -139,21 +139,37 @@ git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-q
 | W | 视盒型 | 宽，cm |
 | H | 视盒型 | 高，cm（平面产品可省） |
 | quantity | 是 | 数量 |
-| material | 否 | 材质，如 300g白卡纸 |
-| crafts | 否 | 后工艺，字符串数组 |
+| material | 否 | 材质，如 300g白卡纸。**不传不会走"盒型默认材质"**：普通盒型一律按 `300g白卡纸` 估算，实际按什么算会在 `data.estimate.assumedMaterial` 里说明。画册不读这个字段，请用 `coverPaper`/`innerPaper` |
+| crafts | 否 | 后工艺，字符串数组。线上无价档的写法（如"贴亮片"）不计价，会在 `data.estimate.unbilledCrafts` 里列出 |
+| pageCount | **画册必填** | P 数（页数，含封面，4 的倍数，如 16/32/64）。画册按「页 × 本」计价，缺它服务端返回 400 追问，不会兜底出价 |
+| bindingType | 否（画册） | 装订：`saddle` 骑马钉 / `perfect` 胶装 / `sewing` 锁线 / `hardcover` 精装 / `ring` 圈装；缺省按 P 数自动选，被纠正过会回 `bindingCorrected` |
+| coverPaper / innerPaper | 否（画册） | 封面纸 / 内页纸，缺省 `250g铜版纸` / `157g铜版纸` |
+| innerCrafts | 否（画册） | 内页工艺，与 `crafts`（封面）分开计价 |
+| foldType / foldName | 否（宣传页） | 折页道数与名称 |
+| colorCount | 否 | 印刷色数，如 4；「四色+白」传 5 |
 | options | 否 | 附加选项，对象 |
 
-成功返回 `{code:200, data:{...}}`，data 关键字段：
-- `finalPrice` / `finalUnitPrice` 最终报价与单价
-- `totalCost` / `unitCost` 成本与单件成本
-- `breakdown` 材料/印刷/表面/成型成本明细
-- `nesting` 拼版方案（幅面、每版拼数、用纸张数）
-- `profitRate` 利润系数，`isSmallBatch` 是否小批量数码
+成功返回 `{code:200, data:{...}}`，data 字段：
+- `finalPrice` / `finalUnitPrice` 总价与单价
+- `boxName` / `boxCode` / `params` / `crafts` / `colorCount` 盒型与参数回显
+- `billQty` 实际计价数量（小批量满版时可能大于 `quantity`）
+- `estimate`（**有则必须转述**）：这一单里没算钱/被系统猜了的部分。
+  `unbilledCrafts` 线上无价档的工艺、`contactRequired` 该转人工核价、
+  `assumedMaterial` 材质是系统估的、`hint` 可直接转述的中文句子
+- 画册另有 `pageCount` / `bindingType` / `bindingName` / `coverPaper` / `innerPaper` / `sizeDesc`；
+  画册按页计价，**没有** `billQty` 与 `colorCount`，复述需求时别当成缺字段
+- `isSmallBatch` 是否走小批量数码路径、`defaultLaminated` 小批量未提覆膜时是否默认含哑膜
+- `nesting` 拼版方案（幅面、每版拼数、印张数）
 - `contact` 联系方式文案，AI 报价回复末尾附上
+
+> 成本构成、利润系数由服务端统一裁剪，接口不下发（2026-09-09 起）。
+> 对外主张是**单价与总价透明、展开尺寸与拼版可核对、成本构成不外发**。
 
 错误返回 `{code:400/404/500, errorCode:"...", message:"...", data:{...}}`（HTTP 状态码仍是 200）。`errorCode` 取值：`MISSING_PARAMS`、`BOX_AMBIGUOUS`、`BOX_UNKNOWN`、`BOX_CONTACT_ONLY`、`ENGINE_ERROR`；额度类 `QUOTA_EXHAUSTED` / `DAILY_LIMIT` 走真实 HTTP 429。
 
 **参数澄清协议**：`/api/quote` 是**无状态**的，补齐参数后必须带上全部已知参数重发一次完整请求，不能只发增量。
+- **画册必须问 P 数**：`pageCount` 缺失返回 `MISSING_PARAMS`（`data.missing` 含 `pageCount`）。
+  P 数不是尺寸、也没有可兜底的"常规值"——32P 与 64P 差一倍成本，猜一个数就是发假价格。
 - `data.askUser`：可直接转述给用户的中文追问句（一次问齐所有缺项）
 - `data.missing` / `data.invalid`：缺哪些字段、哪些字段传了但不是大于 0 的数字
 - `data.missingLabels`：缺项的中文说法

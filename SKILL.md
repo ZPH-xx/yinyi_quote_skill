@@ -33,19 +33,31 @@ description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、
    Content-Type: application/json
    X-Api-Key: <KEY>
 
-   {"boxType":"飞机盒","L":30,"W":20,"H":10,"quantity":500,"material":"300g白卡纸","crafts":["覆亮膜"]}
+   {"boxType":"飞机盒","L":30,"W":20,"H":10,"quantity":500,"material":"300g白卡纸","crafts":["覆亮膜"],"rawText":"30x20x10的飞机盒，300g白卡，覆亮膜，做500个"}
    ```
    curl 写法（先从本地文件读 Key）：
    ```
-   KEY="$(cat ~/.yinyi-quote/key 2>/dev/null)"; curl -s -X POST https://zouph.com/api/quote -H "Content-Type: application/json" -H "X-Api-Key: $KEY" -d '{"boxType":"飞机盒","L":30,"W":20,"H":10,"quantity":500,"material":"300g白卡纸","crafts":["覆亮膜"]}'
+   KEY="$(cat ~/.yinyi-quote/key 2>/dev/null)"; curl -s -X POST https://zouph.com/api/quote -H "Content-Type: application/json" -H "X-Api-Key: $KEY" -d '{"boxType":"飞机盒","L":30,"W":20,"H":10,"quantity":500,"material":"300g白卡纸","crafts":["覆亮膜"],"rawText":"30x20x10的飞机盒，300g白卡，覆亮膜，做500个"}'
    ```
    > 不带 `X-Api-Key` 或 Key 无效会被拒绝（HTTP 401）。
 3. **请求参数**（尺寸单位 cm）：
    - `boxType` 必填：盒型名称/别名/编码。日常名称（飞机盒、天地盖、手提袋、不干胶……）可直接用，服务端自动匹配
    - `L` 必填；`W`、`H` 视盒型需要（卡片/吊牌/宣传页等平面产品可不传 H）
    - `quantity` 必填：数量
-   - `material` 可选：如 `300g白卡纸`；不传则用盒型默认材质
+   - `material` 可选：如 `300g白卡纸`。**不传不会用盒型的默认材质** —— 服务端计价一律兜底到 `300g白卡纸`
+     （`box_types.default_material` 那一列目前只用于展示，不参与算纸），并会在返回的
+     `data.estimate.assumedMaterial` 里告诉你它按什么估的。**要准就必须问到材质再传。**
    - `crafts` 可选：后工艺数组，如 `["覆亮膜","烫金"]`
+   - `pageCount` **画册必填**：P 数（页数，含封面，4 的倍数，如 16P/32P/64P）。
+     画册按「页 × 本」计价，不传服务端返回 `400 MISSING_PARAMS` 追问 —— **绝不猜一个 P 数凑价**。
+   - `bindingType` 可选（画册）：`saddle` 骑马钉 / `perfect` 胶装 / `sewing` 锁线 / `hardcover` 精装 / `ring` 圈装；
+     不传则按 P 数自动选（≤32P 骑马钉，否则胶装），自动纠正过会回 `bindingCorrected`
+   - `coverPaper` / `innerPaper` / `innerCrafts` 可选（画册）：封面纸 / 内页纸 / 内页工艺。
+     画册**不读 `material`**；用户只说材质没说封面还是内页时，按对话链路的老口径归到 `innerPaper`
+   - `foldType` / `colorCount` 可选（宣传页折页道数、印刷色数；「四色+白」= 5）
+   - `rawText` **建议每次带上**：用户这句需求的原样原文（不改写、不摘要、不翻译成参数）。
+     服务端**只做留痕排查，不参与计价、不会回显**，用于事后核对有没有把尺寸/数量/材质抄错——
+     抄错参数是这条链路最常见的错价来源。缺了不影响报价；超过 500 字会被截断。
 4. **（可选）辅助查询接口**：
    - 盒型列表：`GET https://zouph.com/api/box-types`
    - 材质列表：`GET https://zouph.com/api/materials`
@@ -72,18 +84,28 @@ description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、
 - **不许臆造**尺寸、数量、材质、工艺。宁可追问，也不要拿默认值算出一个假价格给用户。
 - 用户只给「30x20」这类不完整尺寸时，按 `requiredDims` 把缺的那一维问出来，别默认成 0 或 10。
 - 数量必须问清；「一批」「若干」「一些」都不是数量。
+- **画册/宣传册必须问 P 数**（`pageCount`）。P 数不是尺寸、也没有"常规默认"可兜：
+  32P 与 64P 差一倍成本，猜一个数就是把假价格发给客户。
+- 响应里只要有 `data.estimate`，说明**这一单有一部分没算钱**：
+  `estimate.unbilledCrafts`（线上无价档的工艺，如"贴亮片"）+ `estimate.contactRequired=true` 时，
+  必须把 `estimate.hint` 原样转述并告知这些工艺要人工核价；
+  `estimate.assumedMaterial` 表示材质是系统替你估的，转述时带上"按 X 估算"。
 - 参数类 400 **不消耗额度**（服务端只对成功报价计数），放心追问后重发。
-- 用户说「你按常规来」时，也只能对**材质/工艺**用默认值（不传 `material` / `crafts` 即走盒型默认）；尺寸与数量仍然必须问。
+- 用户说「你按常规来」时，也只有**工艺**可以留空；**材质仍然必须问** ——
+  不传 `material` 不会走"盒型默认材质"，而是所有普通盒型一律按 `300g白卡纸` 估（见 `estimate.assumedMaterial`）。
+  尺寸与数量任何情况下都必须问清。
 - 一次追问只发一条消息，把缺项列全；用户答完后**只重发一次**请求，不要逐字段试探性重发。
+- 每次请求都带 `rawText`（这一轮用户说的原话，合并重发时带上最新那句）：它不计价、不回显，
+  只让服务端能核对「AI 填的参数」和「用户实际说的话」是否一致。不带也能出价，只是出了错查不出来。
 
 一轮问答示例：
 ```
 用户：30x20x10 的盒子多少钱
-你 → POST /api/quote {"boxType":"盒子","L":30,"W":20,"H":10}
+你 → POST /api/quote {"boxType":"盒子","L":30,"W":20,"H":10,"rawText":"30x20x10 的盒子多少钱"}
 服务端 → code 400, errorCode MISSING_PARAMS, data.missing=["quantity"], data.askUser="请补充：数量"
 你 → 用户：还需要数量，您这批要做多少个？
 用户：500 个
-你 → POST /api/quote {"boxType":"盒子","L":30,"W":20,"H":10,"quantity":500}   ← 全部参数一起重发
+你 → POST /api/quote {"boxType":"盒子","L":30,"W":20,"H":10,"quantity":500,"rawText":"500 个"}   ← 全部参数一起重发，原话带这一轮的
      （若这次返回 BOX_AMBIGUOUS，就按候选盒型让用户选，再把选定的 boxType 连同尺寸数量一起重发）
 ```
 
@@ -91,7 +113,17 @@ description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、
 成功：`{"code":200,"data":{...}}`，data 关键字段：
 - `finalPrice` / `finalUnitPrice` 最终报价与单价（只向用户报这两个价格）
 - `contact` 联系方式文案（报价回复末尾附上，见「附联系方式」）
-- 其余字段（`totalCost`/`unitCost`/`breakdown`/`profitRate`/`nesting` 等）均为内部数据，**严禁向用户展示**
+- `boxName` / `params` / `crafts` / `billQty` 盒型与参数回显（用于复述需求，`billQty` 与 `quantity` 不同时要说清"按 N 个计价"）
+- `nesting` 拼版方案（幅面、每版拼数、印张数）—— 给你自己核对用，**不要转述给客户**
+- 成本字段（`totalCost` / `unitCost` / `breakdown` / `profitRate`）**服务端已不再下发**（2026-09-09 起）。
+  老版本脚本若还在读它们，读到 undefined 就当作"没有这项"，不要报错、更不要向用户解释"看不到成本"
+- `estimate`（**有内容时必须照做，没有这个字段就说明报价是完整的**）：这一单里"系统没算到的部分"。
+  - `estimate.unbilledCrafts`：这些工艺写法线上**没有价档，一分钱都没算进去**。
+    例：用户要"贴亮片"，返回的 `finalPrice` 是一个**不含亮片**的价格。
+  - `estimate.contactRequired = true`：只要有 `unbilledCrafts` 就一定带上。此时**必须**把
+    `estimate.hint` 原样转述给用户，并说明这些工艺要联系人工核价；
+    **禁止**把这个价当成"含全部工艺的成品价"报出去 —— 那等于让客户以为亮片是免费的。
+  - `estimate.assumedMaterial`：用户没给材质时，服务端实际按哪个算的。转述时带上"按 X 估算"。
 
 失败：HTTP 状态码仍是 200，失败信息在 body 的 `code` 字段里（`code:400/404/500`），并带 `errorCode`。
 **先看 `errorCode` 决定动作**，不要靠猜 `message` 文案；`data.askUser` 是可以直接转述给用户的中文句子。
