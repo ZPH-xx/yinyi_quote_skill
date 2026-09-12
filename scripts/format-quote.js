@@ -40,7 +40,11 @@ function printSummary(d) {
   if (d.innerCrafts && d.innerCrafts.length) line("内页工艺 " + d.innerCrafts.join("、"));
   line("------------------------------------------");
   line("★ 最终报价 " + money(d.finalPrice) + " (单价 " + money(d.finalUnitPrice) + ")");
-  // 报价单是客户眼里"含全部要求的成品价"，所以没算钱的工艺必须紧挨着价格写出来。
+  // 未绑定账号的 Key 拿到的是取整参考价（服务端 2026-09-11 起附带 quoteNote 声明）。
+  // 报价单是要发给客户的东西，参考价印成上面这个格式就会被当成可对账的成品价 —— 所以声明必须紧跟着价格。
+  if (d.quoteNote) line("! " + d.quoteNote);
+  // 小批量未提覆膜时服务端已按常规哑膜收过覆膜费（defaultLaminated），复述成"无覆膜"会与客户对不上
+  if (d.defaultLaminated && !(d.crafts || []).some(c => /膜/.test(c))) line("工艺 含常规覆膜（哑膜）");
   // 服务端把这类工艺收在 estimate.unbilledCrafts（2026-09-09 起），不写就等于让它看着像免费。
   if (d.estimate && d.estimate.unbilledCrafts && d.estimate.unbilledCrafts.length) {
     line("! 以上报价未包含: " + d.estimate.unbilledCrafts.join("、") + "（线上无价档，需人工核价）");

@@ -98,10 +98,14 @@ const TOOLS = [
         W: { type: "number", description: "宽（cm）" },
         H: { type: "number", description: "高（cm）；卡片/吊牌/宣传页等平面产品可不传" },
         quantity: { type: "integer", description: "数量，必填" },
-        material: { type: "string", description: "材质，如 300g白卡纸、157g铜版纸。不传时普通盒型一律按 300g白卡纸 估算（不是盒型默认材质！），"
-          + "服务端会在 data.estimate.assumedMaterial 里说明按什么估；要准就必须问到材质。画册不读此字段，请用 coverPaper/innerPaper" },
-        crafts: { type: "array", items: { type: "string" }, description: "后加工工艺，如 覆亮膜/烫金/UV/击凸。线上无价档的写法（如 贴亮片）不计价，"
-          + "响应会以 data.estimate.unbilledCrafts + contactRequired 标出" },
+        material: { type: "string", description: "材质，必须是服务端标准名，形如 300g白卡纸、157g铜版纸（不确定先调 list_materials 确认写法）。"
+          + "🔴 认不出的写法不报错也不提示：会被静默兜底成 300g白卡纸 出价（estimate.assumedMaterial 只在完全没传材质时才出现）。"
+          + "不传时普通盒型按 300g白卡纸 估算（不是盒型默认材质）；画册不读此字段，请用 coverPaper/innerPaper" },
+        crafts: { type: "array", items: { type: "string" }, description: "后加工工艺。**只有这些标准写法会计价**："
+          + "哑膜/亮膜/触感膜/镭射膜/防刮膜/预涂膜/覆膜(含糊按哑膜)、烫金/烫银/烫镭射、UV/局部UV/逆向UV/上油、"
+          + "压纹/凹凸、对裱/裱瓦楞/双面裱/大面积对裱/手工对裱。其余写法（磨砂、珠光上光、3D立体烫、植绒、贴亮片等）"
+          + "一分不计，响应会以 data.estimate.unbilledCrafts + contactRequired 标出，必须转人工核价。"
+          + "模切/粘盒/糊盒/压痕/印刷 与色数（四色、四色+白）不是工艺，别传进来——前者已含在盒型后道费，后者走 colorCount" },
         pageCount: { type: "integer", description: "P 数（页数，含封面，4 的倍数，如 16/32/64）：画册必填" },
         bindingType: { type: "string", description: "装订方式（可选）：saddle 骑马钉 / perfect 胶装 / sewing 锁线 / hardcover 精装 / ring 圈装；缺省按 P 数自动选" },
         coverPaper: { type: "string", description: "画册封面纸（可选），缺省 250g铜版纸" },
@@ -188,7 +192,10 @@ async function runTool(name, args) {
     };
     if (d.estimate) out.estimate = d.estimate;
     for (const k of ["pageCount", "bindingName", "bindingType", "coverPaper", "innerPaper",
-      "innerCrafts", "sizeDesc"]) {
+      "innerCrafts", "sizeDesc",
+      // quoteNote 与 defaultLaminated 是"这个价意味着什么"的两条声明，漏传就等于静默降级：
+      // 前者标出未绑定 Key 拿的是取整参考价（不是可对账的成品价），后者标出小批量已按哑膜收过覆膜费。
+      "quoteNote", "defaultLaminated", "boxCode"]) {
       if (d[k] !== undefined) out[k] = d[k];
     }
     for (const k of ["billQty", "isSmallBatch"]) if (out[k] === undefined) delete out[k];
@@ -262,7 +269,7 @@ async function handle(msg) {
   const id = msg.id;
   try {
     if (msg.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.2.0" } } });
+      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.4.0" } } });
     } else if (msg.method === "notifications/initialized" || msg.method === "notifications/cancelled") {
       // 通知无需回复
     } else if (msg.method === "ping") {
