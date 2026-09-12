@@ -84,7 +84,7 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 | 字段 | 留空时服务端实际怎么算 | 你该怎么做 |
 | --- | --- | --- |
 | `material` | 普通盒型一律按 `300g白卡纸` 估，并回 `estimate.assumedMaterial` | 优先按下方速查表选该盒型的常规材质；判断不了就传 `300g白卡纸`，并告诉客户"按 X 估算" |
-| `crafts` | **按常规哑膜收覆膜费**（留空 ≠ 这道不花钱），小批量还会回 `defaultLaminated` | 用户没提工艺就留空；报价里说明"含常规覆膜（哑膜），换亮膜/触感膜价格有变" |
+| `crafts` | **大批量**：留空＝覆膜这道**不计价**，报价里一分覆膜钱都没有。**小批量**：自动补 `哑膜` 并回 `defaultLaminated=true`（`crafts` 回显会带上哑膜） | 客户没提覆膜时**按常规主动传 `哑膜`**，并说明"按常规哑膜报价，要亮膜/不覆膜请说一声"。大批量留空等于把覆膜白送；确实不做覆膜才留空（小批量可传 `options.noLaminate` 关掉默认） |
 | `bindingType` | 按 P 数自动选（≤32P 骑马钉，否则胶装），纠正过会回 `bindingCorrected` | 留空即可，不用问 |
 | `coverPaper` / `innerPaper` | 封面 `250g铜版纸`、内页 `157g铜版纸` | 留空即可 |
 | `colorCount` | 按四色 | 用户没提色数就不用问 |
@@ -110,7 +110,7 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 红线（与 A 类的"可以兜"配套，别越过它）：
 - B 类三项**任何情况下都不许猜**，包括用户说「你按常规来」「随便估一个」——
   那种情况下可以兜的仍然只有 A 类；用户明确不肯给尺寸/数量就如实说给不出价，并附联系方式转人工。
-- 用了 A 类默认值必须**说出来**：报价里写清"按 300g白卡纸估算 / 含常规哑膜覆膜 / 骑马钉装订"，
+- 用了 A 类默认值必须**说出来**：报价里写清"按 300g白卡纸估算 / 覆膜按常规哑膜报 / 骑马钉装订"，
   不能让客户以为这些是他自己说过的配置。
 - 响应里只要有 `data.estimate`，说明**这一单有一部分没算钱**：
   `estimate.unbilledCrafts`（线上无价档的工艺，如"贴亮片"）+ `estimate.contactRequired=true` 时，
@@ -202,7 +202,9 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 克重规则：
 - 纸类（卡纸/铜版纸/双胶纸/灰板纸…）**要带克重**；不带也能出价，但取的是默认档，不准。
 - 瓦楞（`E瓦`/`AB瓦`…）、不干胶、`PET`/`PP`/`PVC`、`织唛` **不带克重** —— 传 `300gE瓦` 是错的。
-- 克重 ≥700g 会自动按**灰板纸**算（纸板阈值，后台可调）：`800g白卡纸` 实际走灰板。
+- **只报克重、没报纸名**（如 `800g`）且克重超过 700g 时，服务端自动按**灰板纸**算（纸板阈值，后台可调）。
+  写了纸名就不改判：`800g白卡纸` 仍然按白卡取档 —— 而白卡的克重上限只有 400g，出现这种写法八成是客户把
+  纸板说成了卡纸，该问一句"是要灰板对裱还是厚卡纸"，别直接照传。
 - 画册不读 `material`，用 `coverPaper`/`innerPaper`；客户只说材质没说封面还是内页时归到 `innerPaper`。
 
 ## 返回结果解读
