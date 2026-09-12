@@ -78,7 +78,8 @@ function failFrom(json, status, fallback) {
   if (d.recharge) detail.recharge = d.recharge;
   // 在途充值单：少了这个字段，AI 会在用户已经付过钱之后再生成一条链接，变成重复扣款
   if (d.pendingOrders) detail.pendingOrders = d.pendingOrders;
-  ["quotaTotal", "quotaUsed", "quotaPaid", "remaining", "dailyLimit"].forEach((k) => {
+  ["quotaTotal", "quotaUsed", "quotaPaid", "remaining", "dailyLimit",
+   "freeDaily", "dailyUsed", "remainingToday", "resetsTomorrow"].forEach((k) => {
     if (d[k] !== undefined) detail[k] = d[k];
   });
   return new ToolError(detail.message, detail);
@@ -139,12 +140,17 @@ const TOOLS = [
   },
   {
     name: "get_quota",
-    description: "查询当前报价 Key 的剩余次数、已购次数、每日上限与可购档位。用户问「我还剩几次」时用；也可在批量报价前先查，避免中途撞 429。返回 pendingOrders 表示有一笔充值还在确认中，此时告诉用户先别重复付款。",
+    description: "查询当前报价 Key 的剩余次数、已购次数、每日免费次数与可购档位。用户问「我还剩几次」时用；也可在批量报价前先查，避免中途撞 429。"
+      + "免费额度是**每天 N 次**（默认 5 次/天，00:00 恢复）：remaining 指今天还能报几次，不是终身总数。"
+      + "返回 pendingOrders 表示有一笔充值还在确认中，此时告诉用户先别重复付款。",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "get_recharge_url",
-    description: "生成一次性专属充值链接（30 分钟有效，微信扫码付款）。只在次数用完（errorCode QUOTA_EXHAUSTED）且用户明确同意充值时调用；把返回的 url 和 tellUser 原样转述给用户，严禁自己拼充值网址。若返回 alreadyPaid 或 paymentInFlight，说明上一笔已到账或仍在确认中——按 tellUser 让用户直接重发报价，绝不能再付第二次。",
+    description: "生成一次性专属充值链接（30 分钟有效，微信扫码付款；打开后先用手机号登录/注册再付款）。"
+      + "只在次数用完（errorCode QUOTA_EXHAUSTED，含当天免费次数用完）且用户明确同意充值时调用；"
+      + "把返回的 url 和 tellUser 原样转述给用户，严禁自己拼充值网址。"
+      + "若返回 alreadyPaid 或 paymentInFlight，说明上一笔已到账或仍在确认中——按 tellUser 让用户直接重发报价，绝不能再付第二次。",
     inputSchema: { type: "object", properties: {} }
   },
   {
@@ -229,6 +235,9 @@ async function runTool(name, args) {
     return {
       remaining: d.remaining, quotaTotal: d.quotaTotal, quotaUsed: d.quotaUsed,
       quotaPaid: d.quotaPaid, dailyLimit: d.dailyLimit, exhausted: d.exhausted,
+      // 免费额度是"每天 N 次"：这三个字段决定你该怎么回答"我还剩几次"——
+      // 只念 remaining 而不说它是今日的，用户会以为剩下的次数永远不多
+      freeDaily: d.freeDaily, dailyUsed: d.dailyUsed, resetsTomorrow: d.resetsTomorrow,
       packs: d.packs, recharge: d.recharge || null, pendingOrders: d.pendingOrders || null
     };
   }
@@ -243,6 +252,8 @@ async function runTool(name, args) {
     const d = json.data;
     return {
       url: d.url, expiresInMinutes: d.expiresInMinutes, reused: d.reused, packs: d.packs, tellUser: d.tellUser,
+      // 当天免费次数用完这一档：明天 00:00 自动恢复，付款只是为了"今天就继续报"
+      resetsTomorrow: d.resetsTomorrow || false,
       // 上一笔充值还挂着时服务端会先对账：这两种情况下绝不能让用户扫第二次
       paymentInFlight: d.paymentInFlight || false, pendingOrders: d.pendingOrders || null,
       alreadyPaid: d.alreadyPaid || false, grantedQuota: d.grantedQuota || null
@@ -269,7 +280,7 @@ async function handle(msg) {
   const id = msg.id;
   try {
     if (msg.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.4.0" } } });
+      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.5.0" } } });
     } else if (msg.method === "notifications/initialized" || msg.method === "notifications/cancelled") {
       // 通知无需回复
     } else if (msg.method === "ping") {

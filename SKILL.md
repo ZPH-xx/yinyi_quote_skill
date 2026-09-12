@@ -1,6 +1,6 @@
 ---
 name: yinyi-quote
-version: 1.4.0
+version: 1.5.0
 display_name: 印懿印刷包装报价引擎
 display_name_en: Yinyi Printing & Packaging Quote Engine
 description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、纸箱、飞机盒、天地盖、礼品盒、手提袋、画册、宣传页、卡片、不干胶、吊牌等印刷包装产品的价格、报价、成本时使用。指导 AI 直接调用云端报价 API（zouph.com），支持 120+ 盒型、材质与后工艺（覆膜/烫金/UV/模切等），返回最终报价与单价（不向用户透露成本）。
@@ -29,7 +29,8 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 
    {}
    ```
-   返回 `{"code":200,"data":{"apiKey":"yq-…","quotaTotal":5,"remaining":5}}`，自带 5 次免费报价。
+   返回 `{"code":200,"data":{"apiKey":"yq-…","freeDaily":5,"remaining":5}}`，自带**每天 5 次**免费报价
+   （`quotaTotal` 为 0 表示不设终身总次数，不是"没次数"；`remaining` 是**今天**还能报几次）。
    > 可选带 `{"installId":"<8-64位字母数字串>"}`：同一个 installId 永远找回同一个 Key（本地文件被删也能恢复）。
    > 领不到（提示当日领取已达上限）时，直接复用之前保存的 Key；实在没有 Key 就如实告知用户暂时无法报价。
 2. **发起报价请求**（用你可用的任意联网途径：内置网页/HTTP 工具、shell 里的 curl、或向用户申请联网权限后执行），`<KEY>` 换成上一步拿到的值：
@@ -238,8 +239,8 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 | `BOX_UNKNOWN` | 404 | 没有这个盒型的报价公式 | 调 `GET /api/box-types` 找相近盒型让用户确认；确实没有就如实说明并附联系方式 |
 | `BOX_CONTACT_ONLY` | 400 | 异形定制产品，需人工核价 | 别硬算，直接转述 `data.askUser`，并附上 `data.contact` |
 | `ENGINE_ERROR` | 500 | 服务端计算异常 | 不要反复重试；如实告知稍后再试，并附联系方式 |
-| `QUOTA_EXHAUSTED` | HTTP 429 | 这个 Key 的总次数用完了 | 见下面「额度用完了怎么充值」 |
-| `DAILY_LIMIT` | HTTP 429 | 当天次数达上限，明天自动恢复 | **不要引导充值**，如实告知明天恢复 |
+| `QUOTA_EXHAUSTED` | HTTP 429 | 报不了价了：**当天 5 次免费额度用完**（带 `data.resetsTomorrow: true`）或买的/总的次数用完 | 见下面「额度用完了怎么充值」 |
+| `DAILY_LIMIT` | HTTP 429 | 付费 Key 的当日速率上限（`每 Key N 次/天`），明天自动恢复 | **不要引导充值**，如实告知明天恢复 |
 
 只有额度、鉴权、限流才用真实的 4xx 状态码：
 - **401**：`X-Api-Key` 缺失或无效 → 回到流程第 1 步读回/领取 Key 后重试一次
@@ -248,9 +249,13 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 
 ## 额度用完了怎么充值
 
-装机赠送的次数（默认 5 次）用完后，`/api/quote` 返回 **HTTP 429 + `errorCode: "QUOTA_EXHAUSTED"`**，body 的 `data.recharge` 里直接写明了下一步该调哪个接口。**在用户付钱之前反复重试报价没有用**，也不要让用户去重装或改用别的产品——就地充值即可（付完之后按下面第 4 步重发，那一步是必须的）。
+**免费额度是「每天 5 次」，不是「总共 5 次」**：每台机器领一个 Key，每天 00:00 自动恢复，当天用完才涉及充值。
+用户当天问第 6 次时，`/api/quote` 返回 **HTTP 429 + `errorCode: "QUOTA_EXHAUSTED"`**（响应带
+`data.resetsTomorrow: true`、`data.freeDaily: 5`、`data.dailyUsed`），body 的 `data.recharge` 里直接写明了下一步该调哪个接口。
+这时**先把两件事都说清**：明天 00:00 会自动恢复 5 次；想今天就继续，需要在充值页**绑定手机号登录**并购买次数包。
+**在用户付钱之前反复重试报价没有用**，也不要让用户去重装或改用别的产品——就地充值即可（付完之后按下面第 4 步重发，那一步是必须的）。
 
-1. **先问用户**：把 `data.recharge.askUser` 转述给用户（免费额度用完了，需要现在充值次数包吗？）。用户没表示要充，就不要擅自生成链接。
+1. **先问用户**：把 `data.recharge.askUser` 转述给用户（今天的 5 次免费报价用完了，明天自动恢复；要现在绑定手机号登录并充值次数包吗？）。用户没表示要充，就不要擅自生成链接。
 2. 用户同意后，用同一个 Key 换一条**专属充值链接**：
    ```
    POST https://zouph.com/api/skill/claim-url
@@ -260,7 +265,7 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
    {}
    ```
    返回 `data.url`（形如 `https://zouph.com/recharge?t=ct_…`）、`data.expiresInMinutes`（30）、`data.packs`（各档位的价格与次数）、`data.tellUser`（已写好的现成话术）。
-3. **把 `data.url` 原样发给用户**，让他点开：页面上选次数包 → 手机号登录/注册 → 微信扫码付款 → 页面自动确认到账。`data.tellUser` 直接念给用户就行，不用自己组织语言。
+3. **把 `data.url` 原样发给用户**，让他点开：页面上选次数包 → **手机号登录/注册**（这一步就是把报价 Key 绑到账号上，之后换机器、重装 AI 工具都能找回）→ 微信扫码付款 → 页面自动确认到账。`data.tellUser` 直接念给用户就行，不用自己组织语言。
 4. 用户回来说「充好了」之后，**直接重发原来那次报价请求**。服务端在你重发前会自己向微信核对那笔充值：核对上就当场发放并正常出价，你不需要自己确认。想先确认也可以调 `GET https://zouph.com/api/skill/quota`（同样带 `X-Api-Key`），它走的是同一次对账。
 5. **只有一种情况要停下**：响应里出现 `data.pendingOrders`（或 `claim-url` 返回 `alreadyPaid` / `paymentInFlight`）。这说明有一笔充值还在微信侧确认中——**这时绝对不要再生成付款链接、不要让用户扫第二次**，照 `askUser` / `tellUser` 说的等约 30 秒重发报价即可；重发是安全的（额度类 429 不会触发封禁）。反复三四次仍然没到账，再如实告诉用户联系客服 15990159967 并报订单号（`pendingOrders[].orderId`）。
 
@@ -270,7 +275,7 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 - 链接 30 分钟内有效且与这个 Key 绑定；过期或用户换了设备，重新调一次 `claim-url` 即可（30 分钟内会复用同一条链接，不会重复生成）。
 - 用户不方便扫码时用**兑换码**兜底：让用户联系客服 15990159967 拿码，然后 `POST https://zouph.com/api/skill/redeem`，body `{"code":"XXXX-XXXX-XXXX"}`，同样带 `X-Api-Key`；成功后直接把 `message` 转述给用户。
 - 付款一律在充值页里由用户自己完成，不要代用户付款、不要索取付款密码或验证码。
-- `DAILY_LIMIT`（当天次数达上限）**不是**次数用完，明天自动恢复，别引导充值。
+- `DAILY_LIMIT`（付费 Key 的当日速率上限）**不是**次数用完，明天自动恢复，别引导充值。免费的装机 Key 用完当天 5 次走的是 `QUOTA_EXHAUSTED` + `resetsTomorrow: true`，那条**要**引导绑定手机号充值（同时说清明天会恢复）。
 
 ## 联网受阻时
 - shell 里 curl 被沙箱拦截（如报 EACCES、DNS/连接失败）：优先改用你自带的网页/HTTP 工具；或按你的流程向用户申请联网权限后重试
@@ -307,6 +312,7 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 - 报价均为系统估算价，正式订单价以人工确认为准
 - 本 skill 只做报价计算，不下单、不收款
 - 价格库在云端集中维护，skill 无需更新数据
-- 报价需要携带专属 Key（流程第 1 步领取，自带 5 次免费报价）；有频率限制（10 次/分钟/来源）与每日额度（无 Key 的来源按来源地址 50 次/天），正常询价足够；请勿用于批量压测或把接口当价格库爬取
+- 报价需要携带专属 Key（流程第 1 步领取，自带**每天 5 次**免费报价，每天 00:00 恢复）；有频率限制（10 次/分钟/来源）与每日额度（无 Key 的来源按来源地址 50 次/天），正常询价足够；请勿用于批量压测或把接口当价格库爬取
+- 当天 5 次用完后，**不要为了接着报价去重装、换机器、换 installId 领新 Key** —— 那是绕过额度，服务端会按同一来源限制领用，正路是引导用户绑定手机号后充值（或说明明天恢复）
 - 次数用完可就地充值次数包（见「额度用完了怎么充值」），不必让用户改用别的产品；充值链接只能由服务端生成，严禁自己拼充值网址
 - 每次报价服务端都会留痕（Key、来源 IP、盒型与数量、报价结果），便于额度控制与滥用处置；请勿把领到的 Key 分享出去
