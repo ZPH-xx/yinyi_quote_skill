@@ -1,6 +1,6 @@
 ---
 name: yinyi-quote
-version: 1.5.0
+version: 1.5.1
 display_name: 印懿印刷包装报价引擎
 display_name_en: Yinyi Printing & Packaging Quote Engine
 description: 印懿印刷包装报价引擎。当用户要计算/查询纸盒、纸箱、飞机盒、天地盖、礼品盒、手提袋、画册、宣传页、卡片、不干胶、吊牌等印刷包装产品的价格、报价、成本时使用。指导 AI 直接调用云端报价 API（zouph.com），支持 120+ 盒型、材质与后工艺（覆膜/烫金/UV/模切等），返回最终报价与单价（不向用户透露成本）。
@@ -114,8 +114,9 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 - 用了 A 类默认值必须**说出来**：报价里写清"按 300g白卡纸估算 / 覆膜按常规哑膜报 / 骑马钉装订"，
   不能让客户以为这些是他自己说过的配置。
 - 响应里只要有 `data.estimate`，说明**这一单有一部分没算钱**：
-  `estimate.unbilledCrafts`（线上无价档的工艺，如"贴亮片"）+ `estimate.contactRequired=true` 时，
-  必须把 `estimate.hint` 原样转述并告知这些工艺要人工核价；
+  `estimate.unbilledCrafts`（线上无价档的工艺，如"贴亮片"）或 `estimate.unbilledLayers`
+  （材质里查不到单价的那一层，精装盒的灰板最常撞）+ `estimate.contactRequired=true` 时，
+  必须把 `estimate.hint` 原样转述并告知这些工艺/这一层纸要人工核价；
   `estimate.assumedMaterial` 表示材质是系统替你估的，转述时带上"按 X 估算"。
 - 参数类 400 **不消耗额度**（服务端只对成功报价计数），放心追问后重发。
 - 一次追问只发一条消息，把缺项列全；用户答完后**只重发一次**请求，不要逐字段试探性重发。
@@ -224,10 +225,13 @@ description_en: Yinyi printing & packaging quote engine. Use when the user wants
 - `estimate`（**有内容时必须照做，没有这个字段就说明报价是完整的**）：这一单里"系统没算到的部分"。
   - `estimate.unbilledCrafts`：这些工艺写法线上**没有价档，一分钱都没算进去**。
     例：用户要"贴亮片"，返回的 `finalPrice` 是一个**不含亮片**的价格。
-  - `estimate.contactRequired = true`：只要有 `unbilledCrafts` 就一定带上。此时**必须**把
+  - `estimate.contactRequired = true`：只要有 `unbilledCrafts` 或 `unbilledLayers` 就一定带上。此时**必须**把
     `estimate.hint` 原样转述给用户，并说明这些工艺要联系人工核价；
     **禁止**把这个价当成"含全部工艺的成品价"报出去 —— 那等于让客户以为亮片是免费的。
   - `estimate.assumedMaterial`：用户没给材质时，服务端实际按哪个算的。转述时带上"按 X 估算"。
+  - `estimate.unbilledLayers`：客户写的**材质**里有某层在线上查不到单价（精装盒的灰板/面纸常是这一层），
+    那层纸**没算进价**，`finalPrice` 必然偏低。与 `unbilledCrafts` 同样处理：原样转述 `estimate.hint`
+    并说明这一层要人工核价，**禁止**把它当完整成品价报出去。
 
 失败：HTTP 状态码仍是 200，失败信息在 body 的 `code` 字段里（`code:400/404/500`），并带 `errorCode`。
 **先看 `errorCode` 决定动作**，不要靠猜 `message` 文案；`data.askUser` 是可以直接转述给用户的中文句子。

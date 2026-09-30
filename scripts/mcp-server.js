@@ -90,7 +90,7 @@ const TOOLS = [
     name: "calculate_quote",
     description: "计算印刷包装产品报价（纸盒/纸箱/手提袋/画册/宣传页/卡片/不干胶等），只返回总价与单价等售价信息（不含成本明细，请勿向用户透露成本）。"
       + "画册/宣传册必须传 pageCount（P 数），否则服务端返回 400 追问；它按「页 × 本」计价，缺 P 数无法出价。"
-      + "若响应带 data.estimate（未计价工艺 / 材质为系统估算），必须把 estimate.hint 原样转述给用户，不得把这当成含全部工艺的成品价。",
+      + "若响应带 data.estimate（未计价工艺 / 材质有层没价 / 材质为系统估算），必须把 estimate.hint 原样转述给用户，不得把这当成含全部工艺的成品价。",
     inputSchema: {
       type: "object",
       properties: {
@@ -280,7 +280,7 @@ async function handle(msg) {
   const id = msg.id;
   try {
     if (msg.method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.5.0" } } });
+      send({ jsonrpc: "2.0", id, result: { protocolVersion: (msg.params && msg.params.protocolVersion) || "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "yinyin-quote", version: "1.5.1" } } });
     } else if (msg.method === "notifications/initialized" || msg.method === "notifications/cancelled") {
       // 通知无需回复
     } else if (msg.method === "ping") {

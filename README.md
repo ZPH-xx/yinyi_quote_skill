@@ -160,8 +160,8 @@ git clone https://gitee.com/zph2254/yinyi_quote_skill.git ~/.qwen/skills/yinyi-q
 - `boxName` / `boxCode` / `params` / `crafts` / `colorCount` 盒型与参数回显
 - `billQty` 实际计价数量（小批量满版时可能大于 `quantity`）
 - `estimate`（**有则必须转述**）：这一单里没算钱/被系统猜了的部分。
-  `unbilledCrafts` 线上无价档的工艺、`contactRequired` 该转人工核价、
-  `assumedMaterial` 材质是系统估的、`hint` 可直接转述的中文句子
+  `unbilledCrafts` 线上无价档的工艺、`unbilledLayers` 材质里查不到单价的那一层（精装盒的灰板常撞）、
+  `contactRequired` 该转人工核价、`assumedMaterial` 材质是系统估的、`hint` 可直接转述的中文句子
 - 画册另有 `pageCount` / `bindingType` / `bindingName` / `coverPaper` / `innerPaper` / `sizeDesc`；
   画册按页计价，**没有** `billQty` 与 `colorCount`，复述需求时别当成缺字段
 - `isSmallBatch` 是否走小批量数码路径、`defaultLaminated` 小批量未提覆膜时是否默认含哑膜
